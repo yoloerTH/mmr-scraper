@@ -70,7 +70,7 @@ async function humanTypeVIN(page, selector, vin) {
 // ============================================
 
 async function extractMMRValues(page) {
-    console.log('📊 Extracting MMR values from page...');
+    console.log('  → Extracting MMR values from page...');
 
     const mmrData = await page.evaluate(() => {
         // Helper function to extract number from price string
@@ -128,10 +128,11 @@ async function extractMMRValues(page) {
         };
     });
 
-    console.log('  Base MMR (USD):', mmrData.mmr_base_usd || 'NOT FOUND');
-    console.log('  Adjusted MMR (USD):', mmrData.mmr_adjusted_usd || 'NOT FOUND');
-    console.log('  MMR Range:', `$${mmrData.mmr_range_min_usd || '?'} - $${mmrData.mmr_range_max_usd || '?'}`);
-    console.log('  Estimated Retail (USD):', mmrData.estimated_retail_usd || 'NOT FOUND');
+    console.log('  ✅ MMR values extracted:');
+    console.log(`     • Base MMR: ${mmrData.mmr_base_usd ? '$' + mmrData.mmr_base_usd.toLocaleString() : 'NOT FOUND'}`);
+    console.log(`     • Adjusted MMR: ${mmrData.mmr_adjusted_usd ? '$' + mmrData.mmr_adjusted_usd.toLocaleString() : 'NOT FOUND'}`);
+    console.log(`     • MMR Range: ${mmrData.mmr_range_min_usd ? '$' + mmrData.mmr_range_min_usd.toLocaleString() : '?'} - ${mmrData.mmr_range_max_usd ? '$' + mmrData.mmr_range_max_usd.toLocaleString() : '?'}`);
+    console.log(`     • Estimated Retail: ${mmrData.estimated_retail_usd ? '$' + mmrData.estimated_retail_usd.toLocaleString() : 'NOT FOUND'}`);
 
     return mmrData;
 }
@@ -149,7 +150,11 @@ await Actor.main(async () => {
         n8nWebhookUrl = '',
         maxVINsPerRun = 100,
         delayBetweenVINs = [3000, 8000], // [min, max] in milliseconds
-        useProxy = true // Enable Canadian residential proxy by default
+        proxyConfiguration = {
+            useApifyProxy: true,
+            apifyProxyGroups: ['RESIDENTIAL'],
+            apifyProxyCountry: 'CA'
+        }
     } = input;
 
     console.log('🚀 Starting Manheim MMR Scraper...');
@@ -166,14 +171,11 @@ await Actor.main(async () => {
     }
 
     // Setup proxy configuration (Canadian residential proxy)
-    let proxyConfiguration = null;
-    if (useProxy) {
-        proxyConfiguration = await Actor.createProxyConfiguration({
-            groups: ['RESIDENTIAL'],
-            countryCode: 'CA', // Canada - matches your login location
-        });
-        console.log('🌍 Using Canadian residential proxy');
-    }
+    const proxyConfig = await Actor.createProxyConfiguration(proxyConfiguration);
+    const proxyUrl = await proxyConfig.newUrl();
+
+    console.log('🌍 Using Canadian residential proxy');
+    console.log(`  ✅ Proxy: ${proxyConfiguration.apifyProxyCountry} / ${proxyConfiguration.apifyProxyGroups.join(', ')}`);
 
     // Launch browser with stealth
     const browser = await chromium.launch({
@@ -185,75 +187,109 @@ await Actor.main(async () => {
         ],
     });
 
-    // Get proxy info for this session
-    const proxyInfo = proxyConfiguration ? await proxyConfiguration.newProxyInfo() : null;
-
-    if (proxyInfo) {
-        console.log(`  ✅ Proxy URL: ${proxyInfo.url}`);
-    }
-
     const context = await browser.newContext({
         viewport: { width: 1920, height: 1080 },
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         locale: 'en-CA', // Canadian locale
         timezoneId: 'America/Edmonton', // Alberta, Canada timezone (Mountain Time)
-        proxy: proxyInfo ? {
-            server: proxyInfo.url,
-            username: proxyInfo.username,
-            password: proxyInfo.password,
-        } : undefined,
+        proxy: {
+            server: proxyUrl,
+        },
     });
 
     // Set default navigation timeout
     context.setDefaultNavigationTimeout(90000);
 
     // Inject cookies BEFORE navigating
-    console.log('🍪 Injecting session cookies...');
+    console.log('\n🍪 Injecting session cookies...');
+    console.log(`  → Injecting ${manheimCookies.length} cookies`);
+
+    // Group cookies by domain for debugging
+    const cookiesByDomain = {};
+    manheimCookies.forEach(cookie => {
+        if (!cookiesByDomain[cookie.domain]) {
+            cookiesByDomain[cookie.domain] = [];
+        }
+        cookiesByDomain[cookie.domain].push(cookie.name);
+    });
+
+    Object.entries(cookiesByDomain).forEach(([domain, names]) => {
+        console.log(`  → ${domain}: ${names.join(', ')}`);
+    });
+
     await context.addCookies(manheimCookies);
+    console.log('  ✅ Cookies injected successfully');
 
     const page = await context.newPage();
 
     try {
         // STEP 1: Verify login by visiting Manheim home
-        console.log('\n🌐 Verifying Manheim session...');
+        console.log('\n🌐 STEP 1: Verifying Manheim session...');
+        console.log('  → Navigating to: https://home.manheim.com/landingPage#/');
+
         await page.goto('https://home.manheim.com/landingPage#/', {
             waitUntil: 'domcontentloaded',
             timeout: 90000
         });
+        console.log('  ✅ Page loaded (domcontentloaded)');
 
+        console.log('  → Waiting 3-5 seconds...');
         await humanDelay(3000, 5000);
+
+        console.log('  → Simulating mouse movement...');
         await simulateHumanMouse(page);
 
         // Check if we're logged in (wait for MMR button to appear)
+        console.log('  → Looking for MMR button [data-test-id="mmr-btn"]...');
         try {
             await page.waitForSelector('[data-test-id="mmr-btn"]', { timeout: 10000 });
+            console.log('  ✅ MMR button found!');
             console.log('✅ Session verified! Logged into Manheim successfully.');
         } catch (error) {
-            console.error('❌ Login verification failed! Session cookies may be expired.');
+            console.error('  ❌ MMR button not found after 10 seconds');
+            console.error('  → Current URL:', page.url());
+
+            // Take a screenshot for debugging
+            try {
+                const screenshot = await page.screenshot({ fullPage: false });
+                await Actor.setValue('login-failed-screenshot', screenshot, { contentType: 'image/png' });
+                console.error('  → Screenshot saved to Key-Value Store: login-failed-screenshot');
+            } catch (screenshotError) {
+                console.error('  → Could not save screenshot:', screenshotError.message);
+            }
+
+            console.error('\n❌ Login verification failed! Session cookies may be expired.');
             console.error('Please extract fresh cookies from your browser and update the input.');
             throw new Error('Session authentication failed - cookies expired or invalid');
         }
 
         // STEP 2: Click MMR button to open MMR tool
-        console.log('\n📊 Opening MMR tool...');
+        console.log('\n📊 STEP 2: Opening MMR tool...');
+        console.log('  → Simulating mouse movement...');
         await simulateHumanMouse(page);
         await humanDelay(1000, 2000);
 
         // Click MMR button
+        console.log('  → Clicking MMR button [data-test-id="mmr-btn"]...');
         const mmrButton = page.locator('[data-test-id="mmr-btn"]');
         await mmrButton.click({ timeout: 30000 });
+        console.log('  ✅ MMR button clicked');
 
-        console.log('✅ MMR tool opened');
+        console.log('  → Waiting 3-5 seconds for popup...');
         await humanDelay(3000, 5000);
 
         // MMR tool opens in a new window/tab - wait for correct page (filter by URL)
+        console.log('  → Waiting for MMR popup window (mmr.manheim.com)...');
         const mmrPage = await context.waitForEvent('page', page =>
             page.url().includes('mmr.manheim.com')
         );
+        console.log(`  ✅ MMR popup detected: ${mmrPage.url()}`);
+
+        console.log('  → Waiting for page to load...');
         await mmrPage.waitForLoadState('domcontentloaded');
         await humanDelay(2000, 4000);
 
-        console.log('✅ MMR page loaded');
+        console.log('✅ MMR page loaded successfully');
 
         // STEP 3: Process VINs from Supabase
         let vinsProcessed = 0;
@@ -267,12 +303,13 @@ await Actor.main(async () => {
         while (vinsProcessed < maxVINsPerRun) {
             try {
                 // Get next VIN from Supabase
-                console.log(`\n📞 Fetching VIN #${vinsProcessed + 1} from Supabase...`);
+                console.log(`\n📞 STEP 3.${vinsProcessed + 1}: Fetching VIN from Supabase...`);
+                console.log(`  → URL: ${supabaseEdgeFunctionUrl}`);
                 const vinResponse = await fetch(supabaseEdgeFunctionUrl);
                 const vinData = await vinResponse.json();
 
                 if (!vinData.success || !vinData.data) {
-                    console.log('✅ No more pending VINs. Scraping complete!');
+                    console.log('  ✅ No more pending VINs. Scraping complete!');
                     break;
                 }
 
@@ -292,26 +329,31 @@ await Actor.main(async () => {
                 console.log(`${'='.repeat(60)}\n`);
 
                 // STEP 4: Input VIN and search
+                console.log('🔍 STEP 4: Searching VIN in MMR...');
+                console.log('  → Simulating mouse movement...');
                 await simulateHumanMouse(mmrPage);
                 await humanDelay(1000, 2000);
 
                 // Clear existing input if any
+                console.log('  → Clearing VIN input field...');
                 const vinInput = mmrPage.locator('#vinText');
                 await vinInput.clear();
                 await humanDelay(300, 600);
 
                 // Type VIN human-like
-                console.log('⌨️ Typing VIN...');
+                console.log(`  ⌨️ Typing VIN: ${vin}...`);
                 await humanTypeVIN(mmrPage, '#vinText', vin);
+                console.log('  ✅ VIN typed');
 
                 // Click search button
-                console.log('🔍 Clicking search button...');
+                console.log('  → Clicking search button [aria-label="Search VIN"]...');
                 await simulateHumanMouse(mmrPage);
                 const searchButton = mmrPage.locator('button[aria-label="Search VIN"]');
                 await searchButton.click({ timeout: 30000 });
+                console.log('  ✅ Search button clicked');
 
                 // Wait for results to load
-                console.log('⏳ Waiting for MMR results...');
+                console.log('  ⏳ Waiting 4-7 seconds for results...');
                 await humanDelay(4000, 7000);
 
                 // Check if VIN was found
@@ -346,38 +388,46 @@ await Actor.main(async () => {
                 }
 
                 // STEP 5: Input mileage to get adjusted MMR
-                console.log(`📏 Inputting mileage: ${mileage_miles} miles...`);
+                console.log(`\n📏 STEP 5: Inputting mileage for adjusted MMR...`);
+                console.log(`  → Target mileage: ${mileage_miles} miles`);
 
                 // Wait for odometer field to appear
+                console.log('  → Waiting for odometer field #Odometer...');
                 await mmrPage.waitForSelector('#Odometer', { timeout: 10000 });
+                console.log('  ✅ Odometer field found');
                 await humanDelay(1000, 2000);
 
                 // Click the input field
+                console.log('  → Clicking odometer input...');
                 const odometerInput = mmrPage.locator('#Odometer');
                 await odometerInput.click();
                 await humanDelay(300, 600);
 
                 // Clear any existing value
+                console.log('  → Clearing existing value...');
                 await odometerInput.fill('');
                 await humanDelay(300, 600);
 
                 // Type mileage character by character (human-like)
-                console.log('⌨️ Typing mileage...');
+                console.log(`  ⌨️ Typing mileage: ${mileage_miles}...`);
                 for (const char of mileage_miles.toString()) {
                     await mmrPage.keyboard.type(char);
                     await humanDelay(80, 200);
                 }
+                console.log('  ✅ Mileage typed');
 
                 // Click the submit button (checkmark icon)
-                console.log('✅ Submitting mileage...');
+                console.log('  → Clicking submit button [aria-label="Submit odo"]...');
                 const submitButton = mmrPage.locator('button[aria-label="Submit odo"]');
                 await submitButton.click();
+                console.log('  ✅ Submit button clicked');
 
                 // Wait for MMR to recalculate with adjusted mileage
-                console.log('⏳ Waiting for MMR to recalculate...');
+                console.log('  ⏳ Waiting 4-6 seconds for MMR to recalculate...');
                 await humanDelay(4000, 6000);
 
                 // STEP 6: Extract MMR values (now adjusted for mileage)
+                console.log('\n📊 STEP 6: Extracting MMR values...');
                 const mmrValues = await extractMMRValues(mmrPage);
 
                 // Validate that we got data
@@ -389,7 +439,7 @@ await Actor.main(async () => {
                 }
 
                 // STEP 7: Send to n8n webhook
-                console.log('\n📤 Sending data to n8n webhook...');
+                console.log('\n📤 STEP 7: Sending data to n8n webhook...');
                 const webhookPayload = {
                     listing_id,
                     vin,
@@ -403,6 +453,9 @@ await Actor.main(async () => {
                     mileage_miles
                 };
 
+                console.log(`  → URL: ${n8nWebhookUrl}`);
+                console.log(`  → Payload: ${JSON.stringify(webhookPayload, null, 2)}`);
+
                 const webhookResponse = await fetch(n8nWebhookUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -410,10 +463,10 @@ await Actor.main(async () => {
                 });
 
                 if (webhookResponse.ok) {
-                    console.log(`✅ Webhook sent successfully (${webhookResponse.status})`);
+                    console.log(`  ✅ Webhook sent successfully (${webhookResponse.status})`);
                     vinsSuccessful++;
                 } else {
-                    console.log(`⚠️ Webhook failed (${webhookResponse.status})`);
+                    console.log(`  ⚠️ Webhook failed (${webhookResponse.status})`);
                     vinsFailed++;
                 }
 
