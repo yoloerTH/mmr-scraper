@@ -55,20 +55,6 @@ async function extractMMRValues(page) {
     console.log('📊 Extracting MMR values from page...');
 
     const mmrData = await page.evaluate(() => {
-        // Extract "Past 30 Days" value (MMR Base)
-        const past30DaysEl = document.querySelector('.mui-col.mui-col-1-3 .styles__header__zBu6y:has-text("Past 30 Days")');
-        const past30DaysContainer = past30DaysEl?.closest('.styles__container__PoMmt');
-        const mmrBaseText = past30DaysContainer?.querySelector('.styles__value__MtrAr')?.textContent?.trim();
-        const mmrBaseMiles = past30DaysContainer?.querySelector('.styles__odometer__yIzyX span')?.textContent?.trim();
-
-        // Extract Estimated Retail Value
-        const retailEl = document.querySelector('.styles__retail__OuzZX');
-        const retailText = retailEl?.textContent?.trim();
-
-        // Extract Typical Range
-        const rangeContainer = document.querySelector('.styles__range__yw9F9');
-        const rangeText = rangeContainer?.textContent?.trim();
-
         // Helper function to extract number from price string
         const extractPrice = (text) => {
             if (!text) return null;
@@ -77,33 +63,55 @@ async function extractMMRValues(page) {
             return parseInt(match[0].replace(/[$,]/g, ''));
         };
 
-        // Parse range min and max
-        let rangeMin = null;
-        let rangeMax = null;
-        if (rangeText) {
-            const prices = rangeText.match(/\$[\d,]+/g);
+        // Extract Base MMR (36px font, inside baseMMRTitle container)
+        const baseMmrEl = document.querySelector('.styles__baseMMRTitle__AfQgP .styles__currency__EkR32');
+        const baseMmrText = baseMmrEl?.textContent?.trim();
+
+        // Extract Adjusted MMR (44px font, inside adjustedMMRContainer)
+        const adjustedMmrEl = document.querySelector('.styles__adjustedMMRContainer__lixDF .styles__currency__EkR32');
+        const adjustedMmrText = adjustedMmrEl?.textContent?.trim();
+
+        // Extract MMR Range ($36,700 - $40,300)
+        const mmrRangeEl = document.querySelector('.styles__adjMMRRangeValue__fOTt5');
+        const mmrRangeText = mmrRangeEl?.textContent?.trim();
+
+        // Extract Estimated Retail Value
+        const retailEl = document.querySelector('.styles__estimatedRetailValue__Wkxa3');
+        const retailText = retailEl?.textContent?.trim();
+
+        // Extract Typical Range (for retail)
+        const typicalRangeEl = document.querySelector('.styles__adjTypicalRangeValue__rwVzw');
+        const typicalRangeText = typicalRangeEl?.textContent?.trim();
+
+        // Parse MMR Range into min and max
+        let mmrRangeMin = null;
+        let mmrRangeMax = null;
+        if (mmrRangeText) {
+            const prices = mmrRangeText.match(/\$[\d,]+/g);
             if (prices && prices.length >= 2) {
-                rangeMin = parseInt(prices[0].replace(/[$,]/g, ''));
-                rangeMax = parseInt(prices[1].replace(/[$,]/g, ''));
+                mmrRangeMin = parseInt(prices[0].replace(/[$,]/g, ''));
+                mmrRangeMax = parseInt(prices[1].replace(/[$,]/g, ''));
             }
         }
 
         return {
-            mmr_base_usd: extractPrice(mmrBaseText),
-            mmr_adjusted_usd: extractPrice(mmrBaseText), // Usually same as base
-            mmr_range_min_usd: rangeMin,
-            mmr_range_max_usd: rangeMax,
+            mmr_base_usd: extractPrice(baseMmrText),
+            mmr_adjusted_usd: extractPrice(adjustedMmrText),
+            mmr_range_min_usd: mmrRangeMin,
+            mmr_range_max_usd: mmrRangeMax,
             estimated_retail_usd: extractPrice(retailText),
             raw_data: {
-                mmr_base_text: mmrBaseText,
-                mmr_base_miles: mmrBaseMiles,
+                base_mmr_text: baseMmrText,
+                adjusted_mmr_text: adjustedMmrText,
+                mmr_range_text: mmrRangeText,
                 retail_text: retailText,
-                range_text: rangeText
+                typical_range_text: typicalRangeText
             }
         };
     });
 
-    console.log('  MMR Base (USD):', mmrData.mmr_base_usd || 'NOT FOUND');
+    console.log('  Base MMR (USD):', mmrData.mmr_base_usd || 'NOT FOUND');
+    console.log('  Adjusted MMR (USD):', mmrData.mmr_adjusted_usd || 'NOT FOUND');
     console.log('  MMR Range:', `$${mmrData.mmr_range_min_usd || '?'} - $${mmrData.mmr_range_max_usd || '?'}`);
     console.log('  Estimated Retail (USD):', mmrData.estimated_retail_usd || 'NOT FOUND');
 
@@ -299,7 +307,39 @@ await Actor.main(async () => {
                     continue;
                 }
 
-                // STEP 5: Extract MMR values
+                // STEP 5: Input mileage to get adjusted MMR
+                console.log(`📏 Inputting mileage: ${mileage_miles} miles...`);
+
+                // Wait for odometer field to appear
+                await mmrPage.waitForSelector('#Odometer', { timeout: 10000 });
+                await humanDelay(1000, 2000);
+
+                // Click the input field
+                const odometerInput = mmrPage.locator('#Odometer');
+                await odometerInput.click();
+                await humanDelay(300, 600);
+
+                // Clear any existing value
+                await odometerInput.fill('');
+                await humanDelay(300, 600);
+
+                // Type mileage character by character (human-like)
+                console.log('⌨️ Typing mileage...');
+                for (const char of mileage_miles.toString()) {
+                    await mmrPage.keyboard.type(char);
+                    await humanDelay(80, 200);
+                }
+
+                // Click the submit button (checkmark icon)
+                console.log('✅ Submitting mileage...');
+                const submitButton = mmrPage.locator('button[aria-label="Submit odo"]');
+                await submitButton.click();
+
+                // Wait for MMR to recalculate with adjusted mileage
+                console.log('⏳ Waiting for MMR to recalculate...');
+                await humanDelay(4000, 6000);
+
+                // STEP 6: Extract MMR values (now adjusted for mileage)
                 const mmrValues = await extractMMRValues(mmrPage);
 
                 // Validate that we got data
@@ -310,7 +350,7 @@ await Actor.main(async () => {
                     continue;
                 }
 
-                // STEP 6: Send to n8n webhook
+                // STEP 7: Send to n8n webhook
                 console.log('\n📤 Sending data to n8n webhook...');
                 const webhookPayload = {
                     listing_id,
@@ -362,7 +402,7 @@ await Actor.main(async () => {
             }
         }
 
-        // STEP 7: Summary
+        // STEP 8: Summary
         console.log(`\n${'='.repeat(60)}`);
         console.log('📊 SCRAPING SUMMARY');
         console.log(`${'='.repeat(60)}`);
