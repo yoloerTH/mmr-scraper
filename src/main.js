@@ -148,7 +148,8 @@ await Actor.main(async () => {
         supabaseEdgeFunctionUrl = 'https://nyhpgaksdlmrclraqqmg.supabase.co/functions/v1/get-next-vin',
         n8nWebhookUrl = '',
         maxVINsPerRun = 100,
-        delayBetweenVINs = [3000, 8000] // [min, max] in milliseconds
+        delayBetweenVINs = [3000, 8000], // [min, max] in milliseconds
+        useProxy = true // Enable Canadian residential proxy by default
     } = input;
 
     console.log('🚀 Starting Manheim MMR Scraper...');
@@ -164,6 +165,16 @@ await Actor.main(async () => {
         throw new Error('❌ n8nWebhookUrl is required! Please provide your n8n webhook URL.');
     }
 
+    // Setup proxy configuration (Canadian residential proxy)
+    let proxyConfiguration = null;
+    if (useProxy) {
+        proxyConfiguration = await Actor.createProxyConfiguration({
+            groups: ['RESIDENTIAL'],
+            countryCode: 'CA', // Canada - matches your login location
+        });
+        console.log('🌍 Using Canadian residential proxy');
+    }
+
     // Launch browser with stealth
     const browser = await chromium.launch({
         headless: true,
@@ -174,11 +185,23 @@ await Actor.main(async () => {
         ],
     });
 
+    // Get proxy info for this session
+    const proxyInfo = proxyConfiguration ? await proxyConfiguration.newProxyInfo() : null;
+
+    if (proxyInfo) {
+        console.log(`  ✅ Proxy URL: ${proxyInfo.url}`);
+    }
+
     const context = await browser.newContext({
         viewport: { width: 1920, height: 1080 },
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        locale: 'en-US',
-        timezoneId: 'America/New_York',
+        locale: 'en-CA', // Canadian locale
+        timezoneId: 'America/Edmonton', // Alberta, Canada timezone (Mountain Time)
+        proxy: proxyInfo ? {
+            server: proxyInfo.url,
+            username: proxyInfo.username,
+            password: proxyInfo.password,
+        } : undefined,
     });
 
     // Set default navigation timeout
