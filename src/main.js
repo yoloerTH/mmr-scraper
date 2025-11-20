@@ -9,21 +9,36 @@ chromium.use(StealthPlugin());
 // HUMAN-LIKE BEHAVIOR HELPERS
 // ============================================
 
+// Add random jitter to make patterns less predictable
+function jitter() {
+    return Math.floor(Math.random() * 80) - 40; // -40 to +40 random offset
+}
+
 async function humanDelay(min = 1000, max = 3000) {
-    const delay = Math.random() * (max - min) + min;
-    await new Promise(resolve => setTimeout(resolve, delay));
+    const baseDelay = Math.random() * (max - min) + min;
+    const delay = baseDelay + jitter(); // Add jitter to delay
+    await new Promise(resolve => setTimeout(resolve, Math.max(100, delay))); // Min 100ms
 }
 
 async function simulateHumanMouse(page) {
-    const x = Math.floor(Math.random() * 500) + 100;
-    const y = Math.floor(Math.random() * 500) + 100;
+    // More variable mouse positions with jitter
+    const baseX = Math.floor(Math.random() * 600) + 50;
+    const baseY = Math.floor(Math.random() * 600) + 50;
+    const x = baseX + jitter();
+    const y = baseY + jitter();
 
-    await page.mouse.move(x, y, { steps: 10 });
+    // Variable number of steps (8-15 instead of always 10)
+    const steps = Math.floor(Math.random() * 8) + 8;
+
+    await page.mouse.move(x, y, { steps });
     await humanDelay(300, 800);
 }
 
 async function simulateHumanScroll(page) {
-    const scrollAmount = Math.floor(Math.random() * 300) + 200;
+    // More variable scroll amounts with jitter
+    const baseScroll = Math.floor(Math.random() * 400) + 150;
+    const scrollAmount = baseScroll + jitter();
+
     await page.evaluate((amount) => {
         window.scrollBy({
             top: amount,
@@ -38,10 +53,13 @@ async function humanTypeVIN(page, selector, vin) {
     await page.click(selector);
     await humanDelay(300, 600);
 
-    // Type character by character with random delays
+    // Type character by character with variable delays + jitter
     for (const char of vin) {
         await page.keyboard.type(char);
-        await humanDelay(80, 200); // Random typing speed
+        // More variable typing speed: 60-220ms range with jitter
+        const baseTypingDelay = Math.floor(Math.random() * 160) + 60;
+        const typingDelay = baseTypingDelay + (jitter() / 2); // Smaller jitter for typing
+        await new Promise(resolve => setTimeout(resolve, Math.max(50, typingDelay)));
     }
 
     await humanDelay(500, 1000);
@@ -183,19 +201,15 @@ await Actor.main(async () => {
         await humanDelay(3000, 5000);
         await simulateHumanMouse(page);
 
-        // Check if we're logged in (look for MMR button or user info)
-        const isLoggedIn = await page.evaluate(() => {
-            const mmrButton = document.querySelector('[data-test-id="mmr-btn"]');
-            return mmrButton !== null;
-        });
-
-        if (!isLoggedIn) {
+        // Check if we're logged in (wait for MMR button to appear)
+        try {
+            await page.waitForSelector('[data-test-id="mmr-btn"]', { timeout: 10000 });
+            console.log('✅ Session verified! Logged into Manheim successfully.');
+        } catch (error) {
             console.error('❌ Login verification failed! Session cookies may be expired.');
             console.error('Please extract fresh cookies from your browser and update the input.');
             throw new Error('Session authentication failed - cookies expired or invalid');
         }
-
-        console.log('✅ Session verified! Logged into Manheim successfully.');
 
         // STEP 2: Click MMR button to open MMR tool
         console.log('\n📊 Opening MMR tool...');
@@ -209,9 +223,10 @@ await Actor.main(async () => {
         console.log('✅ MMR tool opened');
         await humanDelay(3000, 5000);
 
-        // MMR tool opens in a new window/tab - wait for it
-        const mmrPagePromise = context.waitForEvent('page');
-        const mmrPage = await mmrPagePromise;
+        // MMR tool opens in a new window/tab - wait for correct page (filter by URL)
+        const mmrPage = await context.waitForEvent('page', page =>
+            page.url().includes('mmr.manheim.com')
+        );
         await mmrPage.waitForLoadState('domcontentloaded');
         await humanDelay(2000, 4000);
 
