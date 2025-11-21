@@ -324,29 +324,7 @@ await Actor.main(async () => {
             throw new Error('Session cookies expired - please extract fresh cookies');
         }
 
-        // Check if we're logged in (wait for MMR button to appear)
-        console.log('  → Looking for MMR button [data-test-id="mmr-btn"]...');
-        try {
-            await page.waitForSelector('[data-test-id="mmr-btn"]', { timeout: 10000 });
-            console.log('  ✅ MMR button found!');
-            console.log('✅ Session verified! Logged into Manheim successfully.');
-        } catch (error) {
-            console.error('  ❌ MMR button not found after 10 seconds');
-            console.error('  → Current URL:', page.url());
-
-            // Take a screenshot for debugging
-            try {
-                const screenshot = await page.screenshot({ fullPage: false });
-                await Actor.setValue('login-failed-screenshot', screenshot, { contentType: 'image/png' });
-                console.error('  → Screenshot saved to Key-Value Store: login-failed-screenshot');
-            } catch (screenshotError) {
-                console.error('  → Could not save screenshot:', screenshotError.message);
-            }
-
-            console.error('\n❌ Login verification failed! Session cookies may be expired.');
-            console.error('Please extract fresh cookies from your browser and update the input.');
-            throw new Error('Session authentication failed - cookies expired or invalid');
-        }
+        console.log('✅ Manheim homepage loaded successfully');
 
         // STEP 2: Access MMR tool (optimized with smart fallback)
         console.log('\n📊 STEP 2: Accessing MMR tool...');
