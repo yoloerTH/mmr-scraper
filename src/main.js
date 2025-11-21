@@ -337,7 +337,7 @@ await Actor.main(async () => {
         // Try clicking button first (human-like behavior)
         try {
             console.log('  → Attempting to click MMR button [data-test-id="mmr-btn"]...');
-            const mmrButton = page.locator('[data-test-id="mmr-btn"]');
+            const mmrButton = page.locator('[data-test-id="mmr-btn"]').first();
 
             // Set up popup listener BEFORE clicking (more reliable)
             const popupPromise = context.waitForEvent('page', {
