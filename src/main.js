@@ -66,6 +66,67 @@ async function humanTypeVIN(page, selector, vin) {
 }
 
 // ============================================
+// CAPTCHA & ERROR DETECTION
+// ============================================
+
+async function detectCaptchaOrBlocking(page, pageName = 'page') {
+    console.log(`  → Checking for CAPTCHA/blocking on ${pageName}...`);
+
+    const blockingStatus = await page.evaluate(() => {
+        const text = document.body.textContent.toLowerCase();
+        const html = document.documentElement.innerHTML.toLowerCase();
+
+        return {
+            hasCaptcha: text.includes('captcha') ||
+                       text.includes('verify you are human') ||
+                       text.includes('verify you\'re human'),
+            hasRecaptcha: !!document.querySelector('.g-recaptcha') ||
+                         !!document.querySelector('[data-sitekey]') ||
+                         html.includes('recaptcha'),
+            hasCloudflare: text.includes('cloudflare') ||
+                          text.includes('checking your browser') ||
+                          text.includes('challenge'),
+            hasAccessDenied: text.includes('access denied') ||
+                           text.includes('403 forbidden') ||
+                           text.includes('not authorized'),
+            hasSessionExpired: text.includes('session expired') ||
+                             text.includes('please log in') ||
+                             text.includes('login required'),
+            hasRateLimit: text.includes('too many requests') ||
+                         text.includes('rate limit')
+        };
+    });
+
+    // Report findings
+    if (blockingStatus.hasCaptcha) {
+        console.log('  ⚠️ CAPTCHA challenge detected!');
+    }
+    if (blockingStatus.hasRecaptcha) {
+        console.log('  ⚠️ reCAPTCHA widget found!');
+    }
+    if (blockingStatus.hasCloudflare) {
+        console.log('  ⚠️ Cloudflare challenge detected!');
+    }
+    if (blockingStatus.hasAccessDenied) {
+        console.log('  ⚠️ Access denied message detected!');
+    }
+    if (blockingStatus.hasSessionExpired) {
+        console.log('  ⚠️ Session expired - cookies need refresh!');
+    }
+    if (blockingStatus.hasRateLimit) {
+        console.log('  ⚠️ Rate limit detected - slow down requests!');
+    }
+
+    const isBlocked = Object.values(blockingStatus).some(v => v);
+
+    if (!isBlocked) {
+        console.log(`  ✅ No blocking detected on ${pageName}`);
+    }
+
+    return blockingStatus;
+}
+
+// ============================================
 // MMR EXTRACTION FUNCTIONS
 // ============================================
 
@@ -225,11 +286,11 @@ await Actor.main(async () => {
     const page = await context.newPage();
 
     try {
-        // STEP 1: Verify login by visiting Manheim home
+        // STEP 1: Verify login by visiting Manheim main site
         console.log('\n🌐 STEP 1: Verifying Manheim session...');
-        console.log('  → Navigating to: https://home.manheim.com/landingPage#/');
+        console.log('  → Navigating to: https://www.manheim.com/');
 
-        await page.goto('https://home.manheim.com/landingPage#/', {
+        await page.goto('https://www.manheim.com/', {
             waitUntil: 'domcontentloaded',
             timeout: 90000
         });
@@ -240,6 +301,19 @@ await Actor.main(async () => {
 
         console.log('  → Simulating mouse movement...');
         await simulateHumanMouse(page);
+
+        // Check for CAPTCHA or blocking
+        const homeBlocking = await detectCaptchaOrBlocking(page, 'Manheim home');
+        if (homeBlocking.hasCaptcha || homeBlocking.hasRecaptcha || homeBlocking.hasCloudflare) {
+            console.error('\n❌ CAPTCHA or challenge detected on home page!');
+            const screenshot = await page.screenshot({ fullPage: false });
+            await Actor.setValue('captcha-detected-screenshot', screenshot, { contentType: 'image/png' });
+            throw new Error('CAPTCHA challenge detected - cannot proceed automatically');
+        }
+        if (homeBlocking.hasSessionExpired) {
+            console.error('\n❌ Session expired detected!');
+            throw new Error('Session cookies expired - please extract fresh cookies');
+        }
 
         // Check if we're logged in (wait for MMR button to appear)
         console.log('  → Looking for MMR button [data-test-id="mmr-btn"]...');
@@ -292,6 +366,15 @@ await Actor.main(async () => {
         await humanDelay(2000, 4000);
 
         console.log('✅ MMR page loaded successfully');
+
+        // Check for CAPTCHA on MMR page
+        const mmrBlocking = await detectCaptchaOrBlocking(mmrPage, 'MMR tool');
+        if (mmrBlocking.hasCaptcha || mmrBlocking.hasRecaptcha || mmrBlocking.hasCloudflare) {
+            console.error('\n❌ CAPTCHA or challenge detected on MMR page!');
+            const screenshot = await mmrPage.screenshot({ fullPage: false });
+            await Actor.setValue('mmr-captcha-screenshot', screenshot, { contentType: 'image/png' });
+            throw new Error('CAPTCHA on MMR tool - cannot proceed automatically');
+        }
 
         // STEP 3: Process VINs from Supabase
         let vinsProcessed = 0;
