@@ -170,12 +170,14 @@ await Actor.main(async () => {
         throw new Error('❌ n8nWebhookUrl is required! Please provide your n8n webhook URL.');
     }
 
-    // Setup proxy configuration (Canadian residential proxy)
+    // Setup proxy configuration
     const proxyConfig = await Actor.createProxyConfiguration(proxyConfiguration);
     const proxyUrl = await proxyConfig.newUrl();
 
-    console.log('🌍 Using Canadian residential proxy');
-    console.log(`  ✅ Proxy: ${proxyConfiguration.apifyProxyCountry} / ${proxyConfiguration.apifyProxyGroups.join(', ')}`);
+    console.log('🌍 Proxy Configuration:');
+    console.log(`  ✅ Country: ${proxyConfiguration.apifyProxyCountry}`);
+    console.log(`  ✅ Groups: ${proxyConfiguration.apifyProxyGroups.join(', ')}`);
+    console.log(`  ✅ Proxy URL: ${proxyUrl.substring(0, 50)}...`);
 
     // Launch browser with stealth
     const browser = await chromium.launch({
