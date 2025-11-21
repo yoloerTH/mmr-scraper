@@ -232,13 +232,18 @@ await Actor.main(async () => {
     }
 
     // Setup proxy configuration
-    const proxyConfig = await Actor.createProxyConfiguration(proxyConfiguration);
-    const proxyUrl = await proxyConfig.newUrl();
+    let proxyUrl = null;
+    if (proxyConfiguration && proxyConfiguration.useApifyProxy) {
+        const proxyConfig = await Actor.createProxyConfiguration(proxyConfiguration);
+        proxyUrl = await proxyConfig.newUrl();
 
-    console.log('🌍 Proxy Configuration:');
-    console.log(`  ✅ Country: ${proxyConfiguration.apifyProxyCountry}`);
-    console.log(`  ✅ Groups: ${proxyConfiguration.apifyProxyGroups.join(', ')}`);
-    console.log(`  ✅ Proxy URL: ${proxyUrl.substring(0, 50)}...`);
+        console.log('🌍 Proxy Configuration:');
+        console.log(`  ✅ Country: ${proxyConfiguration.apifyProxyCountry}`);
+        console.log(`  ✅ Groups: ${proxyConfiguration.apifyProxyGroups.join(', ')}`);
+        console.log(`  ✅ Proxy URL: ${proxyUrl.substring(0, 50)}...`);
+    } else {
+        console.log('🌍 No proxy - using direct connection');
+    }
 
     // Launch browser with stealth
     const browser = await chromium.launch({
@@ -250,15 +255,19 @@ await Actor.main(async () => {
         ],
     });
 
-    const context = await browser.newContext({
+    const contextOptions = {
         viewport: { width: 1920, height: 1080 },
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         locale: 'en-CA', // Canadian locale
         timezoneId: 'America/Edmonton', // Alberta, Canada timezone (Mountain Time)
-        proxy: {
-            server: proxyUrl,
-        },
-    });
+    };
+
+    // Only add proxy if configured
+    if (proxyUrl) {
+        contextOptions.proxy = { server: proxyUrl };
+    }
+
+    const context = await browser.newContext(contextOptions);
 
     // Set default navigation timeout
     context.setDefaultNavigationTimeout(90000);
