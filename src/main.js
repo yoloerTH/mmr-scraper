@@ -539,14 +539,14 @@ await Actor.main(async () => {
                 console.log(`  → Target mileage: ${mileage_miles} miles`);
 
                 // Wait for odometer field to appear
-                console.log('  → Waiting for odometer field #Odometer...');
-                await mmrPage.waitForSelector('#Odometer', { timeout: 10000 });
-                console.log('  ✅ Odometer field found');
+                console.log('  → Waiting for odometer input field...');
+                await mmrPage.waitForSelector('input#Odometer', { timeout: 10000 });
+                console.log('  ✅ Odometer input found');
                 await humanDelay(1000, 2000);
 
                 // Click the input field
                 console.log('  → Clicking odometer input...');
-                const odometerInput = mmrPage.locator('#Odometer');
+                const odometerInput = mmrPage.locator('input#Odometer');
                 await odometerInput.click();
                 await humanDelay(300, 600);
 
