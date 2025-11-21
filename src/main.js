@@ -348,79 +348,76 @@ await Actor.main(async () => {
             throw new Error('Session authentication failed - cookies expired or invalid');
         }
 
-        // STEP 2: Click MMR button to open MMR tool
-        console.log('\n📊 STEP 2: Opening MMR tool...');
+        // STEP 2: Access MMR tool (optimized with smart fallback)
+        console.log('\n📊 STEP 2: Accessing MMR tool...');
         console.log('  → Simulating mouse movement...');
         await simulateHumanMouse(page);
         await humanDelay(1000, 2000);
 
-        // Click MMR button
-        console.log('  → Clicking MMR button [data-test-id="mmr-btn"]...');
-        const mmrButton = page.locator('[data-test-id="mmr-btn"]');
-        await mmrButton.click({ timeout: 30000 });
-        console.log('  ✅ MMR button clicked');
-
-        console.log('  → Waiting 3-5 seconds for popup...');
-        await humanDelay(3000, 5000);
-
-        // MMR tool opens in a new window/tab - try to detect it
-        console.log('  → Looking for MMR popup window...');
-
         let mmrPage = null;
 
-        // Strategy 1: Wait for new popup window
+        // Try clicking button first (human-like behavior)
         try {
-            console.log('  → Strategy 1: Waiting for new window with mmr.manheim.com...');
-            mmrPage = await context.waitForEvent('page', {
-                predicate: (page) => page.url().includes('mmr.manheim.com'),
-                timeout: 10000
+            console.log('  → Attempting to click MMR button [data-test-id="mmr-btn"]...');
+            const mmrButton = page.locator('[data-test-id="mmr-btn"]');
+
+            // Set up popup listener BEFORE clicking (more reliable)
+            const popupPromise = context.waitForEvent('page', {
+                predicate: (p) => p.url().includes('mmr.manheim.com'),
+                timeout: 5000 // Quick timeout - if it doesn't open fast, use fallback
             });
-            console.log(`  ✅ Popup detected: ${mmrPage.url()}`);
-        } catch (popupError) {
-            console.log('  ⚠️ No new popup window detected');
 
-            // Strategy 2: Check if current page navigated to MMR
-            console.log('  → Strategy 2: Checking if current page is MMR...');
-            if (page.url().includes('mmr.manheim.com')) {
-                console.log('  ✅ Current page IS MMR tool');
-                mmrPage = page;
-            } else {
-                // Strategy 3: Check all open pages
-                console.log('  → Strategy 3: Checking all open pages...');
-                const allPages = context.pages();
-                console.log(`  → Found ${allPages.length} open pages`);
+            // Click button
+            await mmrButton.click({ timeout: 10000 });
+            console.log('  ✅ MMR button clicked');
 
-                for (const p of allPages) {
-                    console.log(`     • Page URL: ${p.url()}`);
-                    if (p.url().includes('mmr.manheim.com')) {
-                        mmrPage = p;
-                        console.log(`  ✅ Found MMR page in open pages: ${p.url()}`);
-                        break;
-                    }
-                }
+            // Try to catch popup
+            console.log('  → Waiting for popup to open...');
+            try {
+                mmrPage = await popupPromise;
+                console.log(`  ✅ Popup opened successfully: ${mmrPage.url()}`);
+            } catch (popupError) {
+                console.log('  ⚠️ Popup blocked or delayed - using direct navigation fallback');
+
+                // Fallback: Navigate directly to MMR tool
+                console.log('  → Opening MMR tool directly...');
+                mmrPage = await context.newPage();
+                await mmrPage.goto('https://mmr.manheim.com/ui-mmr/?country=US&popup=true&source=man', {
+                    waitUntil: 'domcontentloaded',
+                    timeout: 30000
+                });
+                console.log('  ✅ MMR tool loaded via direct navigation');
             }
+
+        } catch (buttonError) {
+            console.log(`  ⚠️ Button click failed: ${buttonError.message}`);
+            console.log('  → Fallback: Opening MMR tool directly...');
+
+            // Fallback: Navigate directly to MMR tool
+            mmrPage = await context.newPage();
+            await mmrPage.goto('https://mmr.manheim.com/ui-mmr/?country=US&popup=true&source=man', {
+                waitUntil: 'domcontentloaded',
+                timeout: 30000
+            });
+            console.log('  ✅ MMR tool loaded via direct navigation');
         }
 
+        // Verify we have MMR page
         if (!mmrPage) {
-            console.error('\n❌ Could not find MMR page!');
-            console.error('  → Current page URL:', page.url());
-            console.error('  → All open pages:', context.pages().map(p => p.url()));
-
-            // Take screenshot for debugging
+            console.error('\n❌ Failed to open MMR tool!');
             const screenshot = await page.screenshot({ fullPage: false });
-            await Actor.setValue('mmr-not-found-screenshot', screenshot, { contentType: 'image/png' });
-            console.error('  → Screenshot saved: mmr-not-found-screenshot');
-
-            throw new Error('MMR page not found - popup may be blocked or button behavior changed');
+            await Actor.setValue('mmr-failed-screenshot', screenshot, { contentType: 'image/png' });
+            throw new Error('Could not access MMR tool - both button click and direct navigation failed');
         }
 
-        console.log(`✅ MMR page confirmed: ${mmrPage.url()}`);
+        console.log(`✅ MMR page ready: ${mmrPage.url()}`);
 
+        // Wait for page to fully load
         console.log('  → Waiting for page to load...');
         await mmrPage.waitForLoadState('domcontentloaded');
         await humanDelay(2000, 4000);
 
-        console.log('✅ MMR page loaded successfully');
+        console.log('✅ MMR tool loaded successfully');
 
         // Check for CAPTCHA on MMR page
         const mmrBlocking = await detectCaptchaOrBlocking(mmrPage, 'MMR tool');
