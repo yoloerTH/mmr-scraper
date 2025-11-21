@@ -363,12 +363,58 @@ await Actor.main(async () => {
         console.log('  → Waiting 3-5 seconds for popup...');
         await humanDelay(3000, 5000);
 
-        // MMR tool opens in a new window/tab - wait for correct page (filter by URL)
-        console.log('  → Waiting for MMR popup window (mmr.manheim.com)...');
-        const mmrPage = await context.waitForEvent('page', page =>
-            page.url().includes('mmr.manheim.com')
-        );
-        console.log(`  ✅ MMR popup detected: ${mmrPage.url()}`);
+        // MMR tool opens in a new window/tab - try to detect it
+        console.log('  → Looking for MMR popup window...');
+
+        let mmrPage = null;
+
+        // Strategy 1: Wait for new popup window
+        try {
+            console.log('  → Strategy 1: Waiting for new window with mmr.manheim.com...');
+            mmrPage = await context.waitForEvent('page', {
+                predicate: (page) => page.url().includes('mmr.manheim.com'),
+                timeout: 10000
+            });
+            console.log(`  ✅ Popup detected: ${mmrPage.url()}`);
+        } catch (popupError) {
+            console.log('  ⚠️ No new popup window detected');
+
+            // Strategy 2: Check if current page navigated to MMR
+            console.log('  → Strategy 2: Checking if current page is MMR...');
+            if (page.url().includes('mmr.manheim.com')) {
+                console.log('  ✅ Current page IS MMR tool');
+                mmrPage = page;
+            } else {
+                // Strategy 3: Check all open pages
+                console.log('  → Strategy 3: Checking all open pages...');
+                const allPages = context.pages();
+                console.log(`  → Found ${allPages.length} open pages`);
+
+                for (const p of allPages) {
+                    console.log(`     • Page URL: ${p.url()}`);
+                    if (p.url().includes('mmr.manheim.com')) {
+                        mmrPage = p;
+                        console.log(`  ✅ Found MMR page in open pages: ${p.url()}`);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!mmrPage) {
+            console.error('\n❌ Could not find MMR page!');
+            console.error('  → Current page URL:', page.url());
+            console.error('  → All open pages:', context.pages().map(p => p.url()));
+
+            // Take screenshot for debugging
+            const screenshot = await page.screenshot({ fullPage: false });
+            await Actor.setValue('mmr-not-found-screenshot', screenshot, { contentType: 'image/png' });
+            console.error('  → Screenshot saved: mmr-not-found-screenshot');
+
+            throw new Error('MMR page not found - popup may be blocked or button behavior changed');
+        }
+
+        console.log(`✅ MMR page confirmed: ${mmrPage.url()}`);
 
         console.log('  → Waiting for page to load...');
         await mmrPage.waitForLoadState('domcontentloaded');
