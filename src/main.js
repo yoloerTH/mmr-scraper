@@ -641,6 +641,10 @@ await Actor.main(async () => {
                     continue;
                 }
 
+                // Capture the MMR dashboard URL for this vehicle
+                const mmrDashboardUrl = mmrPage.url();
+                console.log(`  → MMR Dashboard URL: ${mmrDashboardUrl}`);
+
                 // STEP 7: Send to n8n webhook
                 console.log('\n📤 STEP 7: Sending data to n8n webhook...');
                 const webhookPayload = {
@@ -651,6 +655,7 @@ await Actor.main(async () => {
                     mmr_range_min_usd: mmrValues.mmr_range_min_usd,
                     mmr_range_max_usd: mmrValues.mmr_range_max_usd,
                     estimated_retail_usd: mmrValues.estimated_retail_usd,
+                    mmr_dashboard_url: mmrDashboardUrl,
                     cargurus_price_cad,
                     cargurus_mileage_km,
                     mileage_miles
