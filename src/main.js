@@ -534,6 +534,62 @@ await Actor.main(async () => {
                     continue;
                 }
 
+                // STEP 4.5: Handle multiple vehicle styles modal (if it appears)
+                console.log('\n🔍 Checking for vehicle style selection modal...');
+                const modalExists = await mmrPage.evaluate(() => {
+                    const modal = document.querySelector('.styles__overlay__jMJmy.show--inline-block');
+                    return !!modal;
+                });
+
+                if (modalExists) {
+                    console.log('  ✅ Modal detected! Multiple vehicle styles found.');
+                    console.log(`  → Selecting style with mileage closest to ${mileage_miles} mi...`);
+
+                    // Extract all rows and find the one with closest mileage
+                    const bestRowIndex = await mmrPage.evaluate((targetMileage) => {
+                        const rows = document.querySelectorAll('.styles__tableContainer__At0ta tbody tr');
+                        let bestIndex = 0;
+                        let smallestDiff = Infinity;
+
+                        rows.forEach((row, index) => {
+                            // Get the "Avg Odo" cell (6th column, index 5)
+                            const avgOdoCell = row.cells[5];
+                            if (!avgOdoCell) return;
+
+                            // Extract mileage number (e.g., "36,995" -> 36995)
+                            const mileageText = avgOdoCell.textContent.trim().replace(/,/g, '');
+                            const mileage = parseInt(mileageText);
+
+                            if (!isNaN(mileage)) {
+                                const diff = Math.abs(mileage - targetMileage);
+                                if (diff < smallestDiff) {
+                                    smallestDiff = diff;
+                                    bestIndex = index;
+                                }
+                            }
+                        });
+
+                        return bestIndex;
+                    }, mileage_miles);
+
+                    console.log(`  → Best match: Row ${bestRowIndex + 1}`);
+
+                    // Click the selected row
+                    await mmrPage.evaluate((rowIndex) => {
+                        const rows = document.querySelectorAll('.styles__tableContainer__At0ta tbody tr');
+                        if (rows[rowIndex]) {
+                            rows[rowIndex].click();
+                        }
+                    }, bestRowIndex);
+
+                    console.log('  ✅ Style selected');
+
+                    // Wait for modal to close and page to update
+                    await humanDelay(2000, 3000);
+                } else {
+                    console.log('  → No modal - single vehicle style');
+                }
+
                 // STEP 5: Input mileage to get adjusted MMR
                 console.log(`\n📏 STEP 5: Inputting mileage for adjusted MMR...`);
                 console.log(`  → Target mileage: ${mileage_miles} miles`);
