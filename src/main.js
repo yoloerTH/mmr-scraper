@@ -477,6 +477,24 @@ await Actor.main(async () => {
                 console.log(`🛣️ Mileage: ${cargurus_mileage_km} km (${mileage_miles} mi)`);
                 console.log(`${'='.repeat(60)}\n`);
 
+                // Check and close any leftover modal before processing VIN
+                const modalOpen = await mmrPage.evaluate(() => {
+                    const modal = document.querySelector('.styles__overlay__jMJmy.show--inline-block');
+                    if (modal) {
+                        const closeButton = modal.querySelector('.styles__close__uf9p4');
+                        if (closeButton) {
+                            closeButton.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                });
+
+                if (modalOpen) {
+                    console.log('  🧹 Closed leftover modal from previous VIN');
+                    await humanDelay(1000, 2000);
+                }
+
                 // STEP 4: Input VIN and search
                 console.log('🔍 STEP 4: Searching VIN in MMR...');
                 console.log('  → Simulating mouse movement...');
@@ -548,7 +566,7 @@ await Actor.main(async () => {
                     console.log('  ✅ Modal detected! Multiple vehicle styles found.');
 
                     // Try to match by trim FIRST, then fallback to mileage
-                    const selectionResult = await mmrPage.evaluate((vehicleTrim, targetMileage) => {
+                    const selectionResult = await mmrPage.evaluate(({ vehicleTrim, targetMileage }) => {
                         const rows = document.querySelectorAll('.styles__tableContainer__At0ta tbody tr');
                         let bestIndex = 0;
                         let matchStrategy = 'mileage'; // default fallback
@@ -593,7 +611,7 @@ await Actor.main(async () => {
                         }
 
                         return { bestIndex, matchStrategy };
-                    }, trim, mileage_miles);
+                    }, { vehicleTrim: trim, targetMileage: mileage_miles });
 
                     const { bestIndex: bestRowIndex, matchStrategy } = selectionResult;
 
