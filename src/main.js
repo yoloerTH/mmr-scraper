@@ -571,27 +571,94 @@ await Actor.main(async () => {
                         let bestIndex = 0;
                         let matchStrategy = 'mileage'; // default fallback
                         let smallestDiff = Infinity;
+                        let matchedStyle = '';
 
-                        // STRATEGY 1: Try to match trim (column 3: Style)
+                        // LOG: Show all available styles for debugging
+                        const availableStyles = [];
+                        rows.forEach((row, index) => {
+                            const styleCell = row.cells[3];
+                            if (styleCell) {
+                                availableStyles.push(`${index + 1}. ${styleCell.textContent.trim()}`);
+                            }
+                        });
+
+                        // Helper: Normalize text for smart matching
+                        const normalize = (text) => {
+                            return text
+                                .toUpperCase()
+                                .replace(/2-DOOR/gi, '2DR')
+                                .replace(/4-DOOR/gi, '4DR')
+                                .replace(/2 DOOR/gi, '2DR')
+                                .replace(/4 DOOR/gi, '4DR')
+                                .replace(/4WD/gi, '4X4')
+                                .replace(/AWD/gi, '4X4')
+                                .replace(/FWD/gi, '2WD')
+                                .replace(/[-_]/g, ' ') // Replace dashes/underscores with spaces
+                                .replace(/\s+/g, ' ')  // Collapse multiple spaces
+                                .trim();
+                        };
+
+                        // STRATEGY 1: Simple includes match (works most of the time)
                         if (vehicleTrim && vehicleTrim.trim() !== '') {
                             const trimUpper = vehicleTrim.trim().toUpperCase();
 
-                            rows.forEach((row, index) => {
-                                const styleCell = row.cells[3]; // Style column
-                                if (!styleCell) return;
+                            for (let index = 0; index < rows.length; index++) {
+                                const row = rows[index];
+                                const styleCell = row.cells[3];
+                                if (!styleCell) continue;
 
                                 const styleText = styleCell.textContent.trim().toUpperCase();
 
-                                // Check if style contains the trim
                                 if (styleText.includes(trimUpper)) {
                                     bestIndex = index;
-                                    matchStrategy = 'trim';
-                                    return; // Found exact trim match, use it!
+                                    matchStrategy = 'trim-exact';
+                                    matchedStyle = styleCell.textContent.trim();
+                                    break;
                                 }
-                            });
+                            }
                         }
 
-                        // STRATEGY 2: If no trim match, use closest mileage
+                        // STRATEGY 2: Smart keyword matching (for edge cases like "Sport 2-Door 4WD")
+                        if (matchStrategy === 'mileage' && vehicleTrim && vehicleTrim.trim() !== '') {
+                            const normalizedTrim = normalize(vehicleTrim);
+                            const trimKeywords = normalizedTrim.split(' ').filter(k => k.length > 1); // Min 2 chars
+
+                            let bestScore = 0;
+                            let bestSmartIndex = 0;
+                            let bestSmartStyle = '';
+
+                            rows.forEach((row, index) => {
+                                const styleCell = row.cells[3];
+                                if (!styleCell) return;
+
+                                const styleText = styleCell.textContent.trim();
+                                const normalizedStyle = normalize(styleText);
+
+                                // Count how many keywords match
+                                let score = 0;
+                                trimKeywords.forEach(keyword => {
+                                    if (normalizedStyle.includes(keyword)) {
+                                        score++;
+                                    }
+                                });
+
+                                // Need at least 50% of keywords to match
+                                const minScore = Math.ceil(trimKeywords.length / 2);
+                                if (score >= minScore && score > bestScore) {
+                                    bestScore = score;
+                                    bestSmartIndex = index;
+                                    bestSmartStyle = styleText;
+                                }
+                            });
+
+                            if (bestScore > 0) {
+                                bestIndex = bestSmartIndex;
+                                matchStrategy = 'trim-smart';
+                                matchedStyle = bestSmartStyle;
+                            }
+                        }
+
+                        // STRATEGY 3: Fallback to closest mileage
                         if (matchStrategy === 'mileage') {
                             rows.forEach((row, index) => {
                                 const avgOdoCell = row.cells[5]; // Avg Odo column
@@ -608,20 +675,35 @@ await Actor.main(async () => {
                                     }
                                 }
                             });
+
+                            // Get the matched style for mileage fallback
+                            const selectedRow = rows[bestIndex];
+                            if (selectedRow && selectedRow.cells[3]) {
+                                matchedStyle = selectedRow.cells[3].textContent.trim();
+                            }
                         }
 
-                        return { bestIndex, matchStrategy };
+                        return { bestIndex, matchStrategy, matchedStyle, availableStyles };
                     }, { vehicleTrim: trim, targetMileage: mileage_miles });
 
-                    const { bestIndex: bestRowIndex, matchStrategy } = selectionResult;
+                    const { bestIndex: bestRowIndex, matchStrategy, matchedStyle, availableStyles } = selectionResult;
 
-                    if (matchStrategy === 'trim') {
-                        console.log(`  🎯 Trim match found! Selecting: "${trim}"`);
+                    // Log available styles
+                    console.log(`  📋 Available styles in modal:`);
+                    availableStyles.forEach(style => {
+                        console.log(`     ${style}`);
+                    });
+
+                    // Log match result
+                    if (matchStrategy === 'trim-exact') {
+                        console.log(`  🎯 Exact trim match! Database: "${trim}" → MMR: "${matchedStyle}"`);
+                    } else if (matchStrategy === 'trim-smart') {
+                        console.log(`  🧠 Smart keyword match! Database: "${trim}" → MMR: "${matchedStyle}"`);
                     } else {
                         console.log(`  ⚠️ No trim match found for "${trim || 'N/A'}"`);
-                        console.log(`  → Fallback: Selecting by closest mileage (${mileage_miles} mi)`);
+                        console.log(`  → Fallback: Selected by closest mileage (${mileage_miles} mi) → "${matchedStyle}"`);
                     }
-                    console.log(`  → Best match: Row ${bestRowIndex + 1}`);
+                    console.log(`  → Selected: Row ${bestRowIndex + 1}`);
 
                     // Click the selected row
                     await mmrPage.evaluate((rowIndex) => {
