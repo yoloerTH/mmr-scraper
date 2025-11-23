@@ -463,6 +463,7 @@ await Actor.main(async () => {
                 const {
                     id: listing_id,
                     vin,
+                    trim,
                     cargurus_price_cad,
                     cargurus_mileage_km,
                     mileage_miles
@@ -471,6 +472,7 @@ await Actor.main(async () => {
                 console.log(`\n${'='.repeat(60)}`);
                 console.log(`🚗 Processing VIN #${vinsProcessed + 1}: ${vin}`);
                 console.log(`📍 Listing ID: ${listing_id}`);
+                console.log(`🎨 Trim: ${trim || 'Not specified'}`);
                 console.log(`💰 CarGurus Price: $${cargurus_price_cad} CAD`);
                 console.log(`🛣️ Mileage: ${cargurus_mileage_km} km (${mileage_miles} mi)`);
                 console.log(`${'='.repeat(60)}\n`);
@@ -521,6 +523,7 @@ await Actor.main(async () => {
                         body: JSON.stringify({
                             listing_id,
                             vin,
+                            trim,
                             cargurus_price_cad,
                             cargurus_mileage_km,
                             mileage_miles,
@@ -543,35 +546,63 @@ await Actor.main(async () => {
 
                 if (modalExists) {
                     console.log('  ✅ Modal detected! Multiple vehicle styles found.');
-                    console.log(`  → Selecting style with mileage closest to ${mileage_miles} mi...`);
 
-                    // Extract all rows and find the one with closest mileage
-                    const bestRowIndex = await mmrPage.evaluate((targetMileage) => {
+                    // Try to match by trim FIRST, then fallback to mileage
+                    const selectionResult = await mmrPage.evaluate((vehicleTrim, targetMileage) => {
                         const rows = document.querySelectorAll('.styles__tableContainer__At0ta tbody tr');
                         let bestIndex = 0;
+                        let matchStrategy = 'mileage'; // default fallback
                         let smallestDiff = Infinity;
 
-                        rows.forEach((row, index) => {
-                            // Get the "Avg Odo" cell (6th column, index 5)
-                            const avgOdoCell = row.cells[5];
-                            if (!avgOdoCell) return;
+                        // STRATEGY 1: Try to match trim (column 3: Style)
+                        if (vehicleTrim && vehicleTrim.trim() !== '') {
+                            const trimUpper = vehicleTrim.trim().toUpperCase();
 
-                            // Extract mileage number (e.g., "36,995" -> 36995)
-                            const mileageText = avgOdoCell.textContent.trim().replace(/,/g, '');
-                            const mileage = parseInt(mileageText);
+                            rows.forEach((row, index) => {
+                                const styleCell = row.cells[3]; // Style column
+                                if (!styleCell) return;
 
-                            if (!isNaN(mileage)) {
-                                const diff = Math.abs(mileage - targetMileage);
-                                if (diff < smallestDiff) {
-                                    smallestDiff = diff;
+                                const styleText = styleCell.textContent.trim().toUpperCase();
+
+                                // Check if style contains the trim
+                                if (styleText.includes(trimUpper)) {
                                     bestIndex = index;
+                                    matchStrategy = 'trim';
+                                    return; // Found exact trim match, use it!
                                 }
-                            }
-                        });
+                            });
+                        }
 
-                        return bestIndex;
-                    }, mileage_miles);
+                        // STRATEGY 2: If no trim match, use closest mileage
+                        if (matchStrategy === 'mileage') {
+                            rows.forEach((row, index) => {
+                                const avgOdoCell = row.cells[5]; // Avg Odo column
+                                if (!avgOdoCell) return;
 
+                                const mileageText = avgOdoCell.textContent.trim().replace(/,/g, '');
+                                const mileage = parseInt(mileageText);
+
+                                if (!isNaN(mileage)) {
+                                    const diff = Math.abs(mileage - targetMileage);
+                                    if (diff < smallestDiff) {
+                                        smallestDiff = diff;
+                                        bestIndex = index;
+                                    }
+                                }
+                            });
+                        }
+
+                        return { bestIndex, matchStrategy };
+                    }, trim, mileage_miles);
+
+                    const { bestIndex: bestRowIndex, matchStrategy } = selectionResult;
+
+                    if (matchStrategy === 'trim') {
+                        console.log(`  🎯 Trim match found! Selecting: "${trim}"`);
+                    } else {
+                        console.log(`  ⚠️ No trim match found for "${trim || 'N/A'}"`);
+                        console.log(`  → Fallback: Selecting by closest mileage (${mileage_miles} mi)`);
+                    }
                     console.log(`  → Best match: Row ${bestRowIndex + 1}`);
 
                     // Click the selected row
@@ -650,6 +681,7 @@ await Actor.main(async () => {
                 const webhookPayload = {
                     listing_id,
                     vin,
+                    trim,
                     mmr_base_usd: mmrValues.mmr_base_usd,
                     mmr_adjusted_usd: mmrValues.mmr_adjusted_usd,
                     mmr_range_min_usd: mmrValues.mmr_range_min_usd,
